@@ -166,6 +166,24 @@ class RSICalculator(LoggerMixin):
             # Рассчитываем RSI
             return self.calculate_standard_rsi(close_prices, period)
 
+        except InsufficientDataError as e:
+            self.logger.warning(
+                "Insufficient candle data for RSI",
+                pair_id=pair_id,
+                timeframe=timeframe,
+                required=e.details.get("required"),
+                provided=e.details.get("provided")
+            )
+            return None
+        except InvalidIndicatorParameterError as e:
+            self.logger.error(
+                "Invalid RSI parameter",
+                pair_id=pair_id,
+                timeframe=timeframe,
+                parameter=e.details.get("parameter"),
+                value=e.details.get("value"),
+            )
+            return None
         except Exception as e:
             self.logger.error(
                 "Error calculating RSI from candles",
