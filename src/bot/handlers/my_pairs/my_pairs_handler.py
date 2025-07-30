@@ -7,22 +7,30 @@
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardButton
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
+import re
+from datetime import datetime
 
 from data.models.user_pair_model import UserPair
 from utils.logger import log_user_action
 from .my_pairs_formatters import (
-    create_no_pairs_message, create_pairs_list_message,
-    create_pair_management_message, create_rsi_display_message,
-    create_rsi_error_message
+    create_no_pairs_message,
+    create_pairs_list_message,
+    create_pair_management_message,
+    create_rsi_display_message,
+    create_rsi_error_message,
 )
 from .my_pairs_keyboards import (
-    create_no_pairs_keyboard, create_pairs_list_keyboard,
-    create_pair_management_keyboard, create_rsi_display_keyboard,
-    get_back_to_management_keyboard
+    create_no_pairs_keyboard,
+    create_pairs_list_keyboard,
+    create_pair_management_keyboard,
+    create_rsi_display_keyboard,
+    get_back_to_management_keyboard,
 )
 from .my_pairs_logic import calculate_rsi_for_pair
 
@@ -32,25 +40,78 @@ logger = structlog.get_logger(__name__)
 # Создаем роутер для обработчиков
 my_pairs_router = Router()
 
+
 # Временно отключаем кеш пока не исправим
 class TempIndicatorCache:
     async def get_rsi(self, symbol, timeframe, period):
         return None
+
     async def invalidate_indicators(self, symbol):
         return True
+
 
 indicator_cache = TempIndicatorCache()
 
 
+async def safe_edit_message(
+    message,
+    new_text: str,
+    reply_markup=None,
+    max_retries: int = 3,
+) -> bool:
+    """
+    Безопасно отредактировать сообщение с проверкой на изменения.
+
+    Args:
+        message: Сообщение для редактирования
+        new_text: Новый текст
+        reply_markup: Новая клавиатура
+        max_retries: Максимум попыток
+
+    Returns:
+        bool: True если успешно отредактировано
+    """
+    try:
+        # Сравниваем текст (убираем HTML теги для корректного сравнения)
+        import re
+
+        current_text = re.sub(r"<[^>]+>", "", message.text or "").strip()
+        new_text_clean = re.sub(r"<[^>]+>", "", new_text).strip()
+
+        # Если текст точно такой же - добавляем timestamp
+        if current_text == new_text_clean:
+            from datetime import datetime
+
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            new_text += f"\n\n<i>🕐 Обновлено: {timestamp}</i>"
+
+        await message.edit_text(new_text, reply_markup=reply_markup)
+        return True
+
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e):
+            logger.warning("Message content is identical, skipping edit")
+            return True  # Считаем успешным, так как контент уже правильный
+        else:
+            logger.error("Telegram error editing message", error=str(e))
+            return False
+    except Exception as e:
+        logger.error("Unexpected error editing message", error=str(e))
+        return False
+
+
 class MyPairsStates(StatesGroup):
     """Состояния FSM для управления парами."""
+
     viewing_pairs = State()
     managing_timeframes = State()
     viewing_rsi = State()
 
 
 @my_pairs_router.callback_query(F.data == "my_pairs")
-async def handle_my_pairs_start(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
+async def handle_my_pairs_start(
+    callback: CallbackQuery, session: AsyncSession, state: FSMContext
+):
     """
     Показать пары пользователя.
 
@@ -72,8 +133,7 @@ async def handle_my_pairs_start(callback: CallbackQuery, session: AsyncSession, 
             # У пользователя нет пар
             no_pairs_text = create_no_pairs_message()
             await callback.message.edit_text(
-                no_pairs_text,
-                reply_markup=create_no_pairs_keyboard()
+                no_pairs_text, reply_markup=create_no_pairs_keyboard()
             )
             await callback.answer("У вас нет отслеживаемых пар")
             log_user_action(user_id, "my_pairs_empty")
@@ -86,10 +146,7 @@ async def handle_my_pairs_start(callback: CallbackQuery, session: AsyncSession, 
         pairs_text = create_pairs_list_message(user_pairs)
         pairs_keyboard = create_pairs_list_keyboard(user_pairs)
 
-        await callback.message.edit_text(
-            pairs_text,
-            reply_markup=pairs_keyboard
-        )
+        await callback.message.edit_text(pairs_text, reply_markup=pairs_keyboard)
 
         await callback.answer()
         log_user_action(user_id, "my_pairs_viewed", pairs_count=len(user_pairs))
@@ -101,7 +158,9 @@ async def handle_my_pairs_start(callback: CallbackQuery, session: AsyncSession, 
 
 
 @my_pairs_router.callback_query(F.data.startswith("manage_pair_"))
-async def handle_pair_management(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
+async def handle_pair_management(
+    callback: CallbackQuery, session: AsyncSession, state: FSMContext
+):
     """
     Управление конкретной торговой парой.
 
@@ -125,9 +184,7 @@ async def handle_pair_management(callback: CallbackQuery, session: AsyncSession,
 
         # Сохраняем информацию в состоянии
         await state.update_data(
-            pair_id=pair_id,
-            pair_symbol=user_pair.pair.symbol,
-            user_pair=user_pair
+            pair_id=pair_id, pair_symbol=user_pair.pair.symbol, user_pair=user_pair
         )
 
         # Переходим к управлению таймфреймами
@@ -138,12 +195,13 @@ async def handle_pair_management(callback: CallbackQuery, session: AsyncSession,
         management_keyboard = create_pair_management_keyboard(user_pair)
 
         await callback.message.edit_text(
-            management_text,
-            reply_markup=management_keyboard
+            management_text, reply_markup=management_keyboard
         )
 
         await callback.answer()
-        log_user_action(user_id, "pair_management_opened", pair_symbol=user_pair.pair.symbol)
+        log_user_action(
+            user_id, "pair_management_opened", pair_symbol=user_pair.pair.symbol
+        )
 
     except ValueError:
         await callback.answer("Неверный формат данных", show_alert=True)
@@ -153,7 +211,9 @@ async def handle_pair_management(callback: CallbackQuery, session: AsyncSession,
 
 
 @my_pairs_router.callback_query(F.data.startswith("toggle_timeframe_"))
-async def handle_timeframe_toggle(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
+async def handle_timeframe_toggle(
+    callback: CallbackQuery, session: AsyncSession, state: FSMContext
+):
     """
     Переключить состояние таймфрейма с автозагрузкой данных.
 
@@ -196,11 +256,13 @@ async def handle_timeframe_toggle(callback: CallbackQuery, session: AsyncSession
                 f"📥 <b>Загрузка данных для {timeframe}</b>\n\n"
                 f"Пара: {user_pair.pair.display_name}\n\n"
                 f"⏳ Загружаем исторические данные...",
-                reply_markup=create_pair_management_keyboard(user_pair)
+                reply_markup=create_pair_management_keyboard(user_pair),
             )
 
             # Загружаем данные для нового таймфрейма
-            from services.data_fetchers.historical.historical_fetcher import HistoricalDataFetcher
+            from services.data_fetchers.historical.historical_fetcher import (
+                HistoricalDataFetcher,
+            )
 
             try:
                 async with HistoricalDataFetcher() as fetcher:
@@ -210,23 +272,27 @@ async def handle_timeframe_toggle(callback: CallbackQuery, session: AsyncSession
                         pair_id=pair_id,
                         symbol=user_pair.pair.symbol,
                         timeframe=timeframe,  # Только этот таймфрейм
-                        limit=500
+                        limit=500,
                     )
 
                 logger.info(
                     "Timeframe data loaded automatically",
                     timeframe=timeframe,
                     candles_loaded=loaded_candles,
-                    pair_symbol=user_pair.pair.symbol
+                    pair_symbol=user_pair.pair.symbol,
                 )
 
                 if loaded_candles > 0:
                     success_message = f"✅ Таймфрейм {timeframe} включен\n📊 Загружено {loaded_candles} свечей"
                 else:
-                    success_message = f"⚠️ Таймфрейм {timeframe} включен\n❌ Нет данных для загрузки"
+                    success_message = (
+                        f"⚠️ Таймфрейм {timeframe} включен\n❌ Нет данных для загрузки"
+                    )
 
             except Exception as e:
-                logger.error("Error loading timeframe data", timeframe=timeframe, error=str(e))
+                logger.error(
+                    "Error loading timeframe data", timeframe=timeframe, error=str(e)
+                )
                 success_message = f"⚠️ Таймфрейм {timeframe} включен\n❌ Ошибка загрузки данных: {str(e)[:50]}"
 
         else:  # Таймфрейм выключен
@@ -240,16 +306,17 @@ async def handle_timeframe_toggle(callback: CallbackQuery, session: AsyncSession
         management_keyboard = create_pair_management_keyboard(user_pair)
 
         await callback.message.edit_text(
-            management_text,
-            reply_markup=management_keyboard
+            management_text, reply_markup=management_keyboard
         )
 
         await callback.answer(success_message)
 
         log_user_action(
-            user_id, "timeframe_toggled",
-            timeframe=timeframe, new_state=new_state,
-            pair_symbol=user_pair.pair.symbol
+            user_id,
+            "timeframe_toggled",
+            timeframe=timeframe,
+            new_state=new_state,
+            pair_symbol=user_pair.pair.symbol,
         )
 
     except Exception as e:
@@ -258,7 +325,9 @@ async def handle_timeframe_toggle(callback: CallbackQuery, session: AsyncSession
 
 
 @my_pairs_router.callback_query(F.data.startswith("view_rsi_"))
-async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
+async def handle_rsi_view(
+    callback: CallbackQuery, session: AsyncSession, state: FSMContext
+):
     """
     Просмотр RSI для пары с автоматической загрузкой исторических данных.
 
@@ -296,16 +365,21 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
 
         if not has_sufficient_data:
             # Показываем сообщение загрузки исторических данных
-            await callback.message.edit_text(
-                f"📥 <b>Загрузка исторических данных</b>\n\n"
-                f"Пара: {user_pair.pair.display_name}\n\n"
-                f"⏳ Загружаем данные с Binance для расчета RSI...\n"
-                f"Это может занять 10-30 секунд.",
-                reply_markup=get_back_to_management_keyboard(pair_id)
+            await safe_edit_message(
+                callback.message,
+                (
+                    f"📥 <b>Загрузка исторических данных</b>\n\n"
+                    f"Пара: {user_pair.pair.display_name}\n\n"
+                    f"⏳ Загружаем данные с Binance для расчета RSI...\n"
+                    f"Это может занять 10-30 секунд."
+                ),
+                reply_markup=get_back_to_management_keyboard(pair_id),
             )
 
             # Загружаем исторические данные
-            from services.data_fetchers.historical.historical_fetcher import HistoricalDataFetcher
+            from services.data_fetchers.historical.historical_fetcher import (
+                HistoricalDataFetcher,
+            )
             from config.bot_config import get_bot_config
 
             config = get_bot_config()
@@ -316,13 +390,13 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
                         pair_id=pair_id,
                         symbol=user_pair.pair.symbol,
                         timeframes=user_pair.get_enabled_timeframes(),
-                        limit=500  # Загружаем 500 свечей
+                        limit=500,  # Загружаем 500 свечей
                     )
 
                 logger.info(
                     "Historical data loaded for RSI",
                     pair_symbol=user_pair.pair.symbol,
-                    candles_loaded=historical_candles
+                    candles_loaded=historical_candles,
                 )
 
                 if historical_candles == 0:
@@ -341,9 +415,10 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
 • Проверьте интернет-соединение
 • Обратитесь к администратору"""
 
-                    await callback.message.edit_text(
+                    await safe_edit_message(
+                        callback.message,
                         error_text,
-                        reply_markup=get_back_to_management_keyboard(pair_id)
+                        reply_markup=get_back_to_management_keyboard(pair_id),
                     )
                     return
 
@@ -358,18 +433,22 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
 
 Попробуйте позже или обратитесь к администратору."""
 
-                await callback.message.edit_text(
+                await safe_edit_message(
+                    callback.message,
                     error_text,
-                    reply_markup=get_back_to_management_keyboard(pair_id)
+                    reply_markup=get_back_to_management_keyboard(pair_id),
                 )
                 return
 
         # Показываем индикатор расчета RSI
-        await callback.message.edit_text(
-            f"🔢 <b>Расчет RSI</b>\n\n"
-            f"Пара: {user_pair.pair.display_name}\n\n"
-            f"⏳ Рассчитываем индикаторы...",
-            reply_markup=get_back_to_management_keyboard(pair_id)
+        await safe_edit_message(
+            callback.message,
+            (
+                f"🔢 <b>Расчет RSI</b>\n\n"
+                f"Пара: {user_pair.pair.display_name}\n\n"
+                f"⏳ Рассчитываем индикаторы..."
+            ),
+            reply_markup=get_back_to_management_keyboard(pair_id),
         )
 
         # Рассчитываем RSI для активных таймфреймов
@@ -394,9 +473,10 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
 • Нажать "🔄 Обновить данные" ещё раз
 • Проверить активные таймфреймы"""
 
-            await callback.message.edit_text(
+            await safe_edit_message(
+                callback.message,
                 error_text,
-                reply_markup=create_rsi_display_keyboard(pair_id)
+                reply_markup=create_rsi_display_keyboard(pair_id),
             )
             return
 
@@ -404,9 +484,10 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
         rsi_text = create_rsi_display_message(user_pair, rsi_data)
         rsi_keyboard = create_rsi_display_keyboard(pair_id)
 
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             rsi_text,
-            reply_markup=rsi_keyboard
+            reply_markup=rsi_keyboard,
         )
 
         await callback.answer()
@@ -418,13 +499,17 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
         logger.error("Error viewing RSI", user_id=user_id, error=str(e))
 
         error_text = create_rsi_error_message()
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             error_text,
-            reply_markup=get_back_to_management_keyboard(pair_id)
+            reply_markup=get_back_to_management_keyboard(pair_id),
         )
 
+
 @my_pairs_router.callback_query(F.data.startswith("back_to_management_"))
-async def handle_back_to_management(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
+async def handle_back_to_management(
+    callback: CallbackQuery, session: AsyncSession, state: FSMContext
+):
     """
     Вернуться к управлению парой.
 
@@ -454,8 +539,7 @@ async def handle_back_to_management(callback: CallbackQuery, session: AsyncSessi
         management_keyboard = create_pair_management_keyboard(user_pair)
 
         await callback.message.edit_text(
-            management_text,
-            reply_markup=management_keyboard
+            management_text, reply_markup=management_keyboard
         )
 
         await callback.answer()
@@ -478,7 +562,9 @@ def register_my_pairs_handlers(dp):
 
 
 @my_pairs_router.callback_query(F.data.startswith("rsi_current_"))
-async def handle_rsi_current_view(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
+async def handle_rsi_current_view(
+    callback: CallbackQuery, session: AsyncSession, state: FSMContext
+):
     """
     Показать текущие значения RSI из кеша для быстрого просмотра.
 
@@ -500,7 +586,9 @@ async def handle_rsi_current_view(callback: CallbackQuery, session: AsyncSession
             await callback.answer("Пара не найдена", show_alert=True)
             return
 
-        logger.info("Showing current RSI values", user_id=user_id, symbol=user_pair.pair.symbol)
+        logger.info(
+            "Showing current RSI values", user_id=user_id, symbol=user_pair.pair.symbol
+        )
 
         # Получаем значения RSI из кеша для активных таймфреймов
         rsi_values = {}
@@ -517,76 +605,71 @@ async def handle_rsi_current_view(callback: CallbackQuery, session: AsyncSession
                     "Error getting RSI value from cache",
                     symbol=user_pair.pair.symbol,
                     timeframe=timeframe,
-                    error=str(e)
+                    error=str(e),
                 )
 
         # Форматируем сообщение используя новый форматтер
         from services.notifications.message_formatter import MessageFormatter
+
         formatter = MessageFormatter()
-        message_text = formatter.format_rsi_current_values(user_pair.pair.symbol, rsi_values)
+        message_text = formatter.format_rsi_current_values(
+            user_pair.pair.symbol, rsi_values
+        )
 
         # Создаем клавиатуру с кнопками обновления и возврата
         from aiogram.utils.keyboard import InlineKeyboardBuilder
+
         builder = InlineKeyboardBuilder()
 
         builder.row(
             InlineKeyboardButton(
-                text="🔄 Обновить",
-                callback_data=f"rsi_current_{pair_id}"
+                text="🔄 Обновить", callback_data=f"rsi_current_{pair_id}"
             )
         )
 
         builder.row(
             InlineKeyboardButton(
-                text="📊 Полный RSI",
-                callback_data=f"view_rsi_{pair_id}"
+                text="📊 Полный RSI", callback_data=f"view_rsi_{pair_id}"
             )
         )
 
         builder.row(
             InlineKeyboardButton(
-                text="⚙️ Управление парой",
-                callback_data=f"back_to_management_{pair_id}"
+                text="⚙️ Управление парой", callback_data=f"back_to_management_{pair_id}"
             )
         )
 
         builder.row(
-            InlineKeyboardButton(
-                text="🏠 Главное меню",
-                callback_data="main_menu"
-            )
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")
         )
 
         keyboard = builder.as_markup()
 
         # Отправляем сообщение
         await callback.message.edit_text(
-            text=message_text,
-            reply_markup=keyboard,
-            parse_mode="HTML"
+            text=message_text, reply_markup=keyboard, parse_mode="HTML"
         )
 
         await callback.answer()
 
-        log_user_action(user_id, "rsi_current_viewed", pair_symbol=user_pair.pair.symbol)
+        log_user_action(
+            user_id, "rsi_current_viewed", pair_symbol=user_pair.pair.symbol
+        )
 
     except ValueError:
         await callback.answer("Неверный формат данных", show_alert=True)
     except Exception as e:
-        logger.error(
-            "Error showing current RSI values",
-            user_id=user_id,
-            error=str(e)
-        )
+        logger.error("Error showing current RSI values", user_id=user_id, error=str(e))
 
         await callback.answer(
-            text="❌ Ошибка при получении данных RSI",
-            show_alert=True
+            text="❌ Ошибка при получении данных RSI", show_alert=True
         )
 
 
 @my_pairs_router.callback_query(F.data.startswith("refresh_rsi_"))
-async def handle_refresh_rsi(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
+async def handle_refresh_rsi(
+    callback: CallbackQuery, session: AsyncSession, state: FSMContext
+):
     """
     Принудительно обновить RSI данные.
 
@@ -613,7 +696,7 @@ async def handle_refresh_rsi(callback: CallbackQuery, session: AsyncSession, sta
             f"🔄 <b>Обновление RSI</b>\n\n"
             f"Пара: {user_pair.pair.display_name}\n\n"
             f"⏳ Пересчитываем индикаторы...",
-            reply_markup=get_back_to_management_keyboard(pair_id)
+            reply_markup=get_back_to_management_keyboard(pair_id),
         )
 
         # Принудительно очищаем кеш индикаторов для этой пары
@@ -626,10 +709,7 @@ async def handle_refresh_rsi(callback: CallbackQuery, session: AsyncSession, sta
         rsi_text = create_rsi_display_message(user_pair, rsi_data)
         rsi_keyboard = create_rsi_display_keyboard(pair_id)
 
-        await callback.message.edit_text(
-            rsi_text,
-            reply_markup=rsi_keyboard
-        )
+        await callback.message.edit_text(rsi_text, reply_markup=rsi_keyboard)
 
         await callback.answer("✅ RSI обновлен")
         log_user_action(user_id, "rsi_refreshed", pair_symbol=user_pair.pair.symbol)
@@ -637,9 +717,5 @@ async def handle_refresh_rsi(callback: CallbackQuery, session: AsyncSession, sta
     except ValueError:
         await callback.answer("Неверный формат данных", show_alert=True)
     except Exception as e:
-        logger.error(
-            "Error refreshing RSI",
-            user_id=user_id,
-            error=str(e)
-        )
+        logger.error("Error refreshing RSI", user_id=user_id, error=str(e))
         await callback.answer("❌ Ошибка при обновлении RSI", show_alert=True)
