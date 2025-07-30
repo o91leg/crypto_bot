@@ -1,0 +1,45 @@
+# Основные зависимости для Telegram бота
+aiogram==3.4.1
+aiohttp==3.9.3
+aiofiles==23.2.0
+
+# Математические библиотеки
+numpy==1.26.4
+pandas==2.2.1
+talib==0.4.28
+
+# База данных
+asyncpg==0.29.0
+sqlalchemy[asyncio]==2.0.25
+alembic==1.13.1
+
+# Кеширование
+redis[hiredis]==5.0.1
+aioredis==2.0.1
+
+# Работа с криптовалютными данными
+python-binance==1.0.19
+websockets==12.0
+
+# Конфигурация и окружение
+python-dotenv==1.0.1
+pydantic==2.6.2
+pydantic-settings==2.2.1
+
+# Логирование
+loguru==0.7.2
+
+# Тестирование
+pytest==8.0.2
+pytest-asyncio==0.23.5
+pytest-mock==3.12.0
+
+# Дополнительные утилиты
+python-dateutil==2.8.2
+pytz==2024.1
+typing-extensions==4.9.0
+
+# Для разработки
+black==24.2.0
+flake8==7.0.0
+mypy==1.8.0

@@ -1,0 +1,34 @@
+# Telegram Bot Configuration
+BOT_TOKEN=7826210826:AAGUqh1MgxC8M0_gj-u6k6fmRjRMKqJbFLg
+
+# Database Configuration
+DATABASE_URL=postgresql://crypto_user:crypto_pass@postgres:5432/crypto_bot
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=crypto_bot
+DB_USER=crypto_user
+DB_PASSWORD=crypto_pass
+
+# Redis Configuration
+REDIS_URL=redis://redis:6379/0
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_DB=0
+
+# Binance API Configuration
+BINANCE_BASE_URL=wss://stream.binance.com:9443/ws
+BINANCE_REST_URL=https://api.binance.com
+
+# Application Settings
+DEBUG=True
+LOG_LEVEL=INFO
+MAX_CONNECTIONS=100
+
+# Rate Limiting
+NOTIFICATION_RATE_LIMIT=10
+SIGNAL_CHECK_INTERVAL=60
+
+# Default Settings
+DEFAULT_RSI_PERIOD=14
+DEFAULT_EMA_PERIODS=20,50,100,200
+DEFAULT_TIMEFRAMES=1m,5m,15m,1h,2h,4h,1d,1w
