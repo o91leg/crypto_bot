@@ -1,11 +1,15 @@
 import asyncio
-from data.database import get_async_session
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+from data.database import get_session, init_database
 from data.models.candle_model import Candle
 from sqlalchemy import text
 
 async def cleanup_invalid_candles():
-    """Удалить или исправить записи с невалидными значениями"""
-    async with get_async_session() as session:
+    await init_database()  # добавь эту строку
+    async with get_session() as session:
+
         # Найти записи с проблемными значениями
         result = await session.execute(
             text("SELECT id, volume, quote_volume FROM candles WHERE volume > 9999999999 OR quote_volume > 9999999999")
