@@ -8,6 +8,7 @@
 from typing import List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
+from decimal import Decimal, InvalidOperation
 
 from data.models.candle_model import Candle
 from utils.validators import validate_binance_kline_data, validate_binance_kline_data_detailed
@@ -15,6 +16,32 @@ from utils.logger import LoggerMixin
 
 # Настройка логирования
 logger = structlog.get_logger(__name__)
+
+
+def validate_numeric_field(value: str, field_name: str, max_digits: int = 24) -> Decimal:
+    """Валидировать числовое поле перед сохранением в БД."""
+    try:
+        decimal_value = Decimal(value)
+        max_value = Decimal('9999999999999999.99999999')
+        if decimal_value > max_value:
+            logger.warning(
+                "Value exceeds maximum, capping",
+                field_name=field_name,
+                original_value=str(decimal_value),
+                capped_value=str(max_value)
+            )
+            return max_value
+        if decimal_value < 0:
+            logger.warning(
+                "Negative value, setting to zero",
+                field_name=field_name,
+                value=str(decimal_value)
+            )
+            return Decimal('0')
+        return decimal_value
+    except (ValueError, InvalidOperation):
+        logger.error("Invalid decimal value", field_name=field_name, value=value)
+        return Decimal('0')
 
 
 class HistoricalDataProcessor(LoggerMixin):
