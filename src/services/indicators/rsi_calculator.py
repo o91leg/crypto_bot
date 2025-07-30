@@ -5,16 +5,12 @@
 Дата создания: 2025-07-28
 """
 
-from typing import List, Optional, Dict, Any, Tuple
-from decimal import Decimal
+from typing import List, Optional, Dict, Any
 import structlog
 
 from utils.math_helpers import (
-    calculate_rsi_values,
     calculate_smoothed_rsi,
     normalize_price_array,
-    calculate_single_rsi_value,
-    is_valid_price
 )
 from utils.exceptions import (
     InsufficientDataError,
@@ -227,81 +223,80 @@ class RSICalculator(LoggerMixin):
 
     def calculate_standard_rsi(self, prices: List[float], period: int = None) -> Optional[RSIResult]:
         """
-        Рассчитать стандартный RSI.
+        Рассчитать стандартный RSI по классической формуле Wilder.
+
+        RSI = 100 - (100 / (1 + RS))
+        RS = Average Gain / Average Loss
 
         Args:
-            prices: Список цен закрытия
-            period: Период для расчета
+            prices: Список цен закрытия (от старых к новым)
+            period: Период для расчета (по умолчанию 14)
 
         Returns:
-            Optional[RSIResult]: Результат расчета RSI
+            RSIResult или None при ошибке
         """
         if period is None:
             period = self.default_period
 
-        # Валидация параметров
-        if period < 2:
-            raise InvalidIndicatorParameterError("RSI", "period", period, "Period must be >= 2")
-
-        if period > 100:
-            raise InvalidIndicatorParameterError("RSI", "period", period, "Period must be <= 100")
-
-        # Нормализуем цены
-        normalized_prices = normalize_price_array(prices)
-
-        if len(normalized_prices) < period + 1:
-            raise InsufficientDataError("RSI", period + 1, len(normalized_prices))
+        if len(prices) < period + 1:
+            raise InsufficientDataError("RSI", period + 1, len(prices))
 
         try:
-            # Рассчитываем изменения цен
+            # Вычисляем изменения цен
             price_changes = []
-            for i in range(1, len(normalized_prices)):
-                change = normalized_prices[i] - normalized_prices[i - 1]
+            for i in range(1, len(prices)):
+                change = prices[i] - prices[i - 1]
                 price_changes.append(change)
 
-            # ИСПРАВЛЕННАЯ СТРОКА:
-            rsi_values = calculate_rsi_values(price_changes, period)
-            if not rsi_values:
-                self.logger.warning("RSI calculation returned empty values", period=period, prices_count=len(prices))
+            # Разделяем на прибыли и убытки
+            gains = [max(change, 0) for change in price_changes]
+            losses = [abs(min(change, 0)) for change in price_changes]
+
+            # Первый RSI - простое среднее
+            if len(gains) < period:
+                raise InsufficientDataError("RSI", period, len(gains))
+
+            avg_gain = sum(gains[:period]) / period
+            avg_loss = sum(losses[:period]) / period
+
+            # Избегаем деления на ноль
+            if avg_loss == 0:
+                rsi_value = 100.0
+            else:
+                rs = avg_gain / avg_loss
+                rsi_value = 100 - (100 / (1 + rs))
+
+            # Для последующих значений используем экспоненциальное сглаживание
+            for i in range(period, len(gains)):
+                avg_gain = ((avg_gain * (period - 1)) + gains[i]) / period
+                avg_loss = ((avg_loss * (period - 1)) + losses[i]) / period
+
+                if avg_loss == 0:
+                    rsi_value = 100.0
+                else:
+                    rs = avg_gain / avg_loss
+                    rsi_value = 100 - (100 / (1 + rs))
+
+            # Проверяем корректность результата
+            if not (0 <= rsi_value <= 100):
+                self.logger.error("Invalid RSI value calculated", rsi=rsi_value)
                 return None
 
-            # Берем последнее значение RSI
-            rsi_value = rsi_values[-1]
-
-            if rsi_value is None:
-                self.logger.warning("RSI calculation returned None", period=period, prices_count=len(prices))
-                return None
-
-            # Рассчитываем дополнительные метрики
-            gains = [change if change > 0 else 0 for change in price_changes[-period:]]
-            losses = [-change if change < 0 else 0 for change in price_changes[-period:]]
-
-            avg_gain = sum(gains) / period
-            avg_loss = sum(losses) / period
-
-            result = RSIResult(
-                value=rsi_value,
+            # Создаем результат
+            return RSIResult(
+                value=round(rsi_value, 2),
                 period=period,
                 avg_gain=avg_gain,
                 avg_loss=avg_loss,
                 price_changes=price_changes[-period:]
             )
 
-            self.logger.debug(
-                "RSI calculated",
-                rsi=round(rsi_value, 2),
-                period=period,
-                signal_strength=result.get_signal_strength()
-            )
-
-            return result
-
         except Exception as e:
             self.logger.error(
                 "Error in RSI calculation",
+                error=str(e),
                 period=period,
-                prices_count=len(prices),
-                error=str(e)
+                prices_count=len(prices)
             )
             return None
 
