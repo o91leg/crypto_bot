@@ -87,13 +87,13 @@ class Candle(Base):
 
     # Объем торгов
     volume: Mapped[Decimal] = mapped_column(
-        Numeric(18, 8),
+        Numeric(24, 8),
         nullable=False,
         comment="Объем торгов в базовой валюте"
     )
 
     quote_volume: Mapped[Optional[Decimal]] = mapped_column(
-        Numeric(18, 8),
+        Numeric(24, 8),
         nullable=True,
         comment="Объем торгов в котируемой валюте"
     )
