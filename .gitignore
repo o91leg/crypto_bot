@@ -190,3 +190,4 @@ run_local.sh
 debug.py
 test_local.py
 *.pyc
+*.pyc
