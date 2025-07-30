@@ -294,10 +294,13 @@ class Candle(Base):
             session: AsyncSession,
             pair_id: int,
             timeframe: str,
-            limit: int = 100
+            limit: int = 500
     ) -> List["Candle"]:
-        """
-        Получить последние свечи для пары и таймфрейма.
+        """Получить последние свечи для пары и таймфрейма.
+
+        Результат всегда возвращается в хронологическом порядке
+        (от самых старых к самым новым), что важно для расчета индикаторов
+        вроде RSI.
 
         Args:
             session: Сессия базы данных
@@ -306,7 +309,7 @@ class Candle(Base):
             limit: Количество свечей
 
         Returns:
-            List[Candle]: Список свечей, отсортированный по времени
+            List[Candle]: Список последних свечей в хронологическом порядке
         """
         stmt = (
             select(cls)
@@ -319,8 +322,9 @@ class Candle(Base):
             .limit(limit)
         )
         result = await session.execute(stmt)
-        candles = list(result.scalars().all())
-        return list(reversed(candles))  # Возвращаем в хронологическом порядке
+        candles = list(result.scalars())
+        candles.reverse()  # Преобразуем в порядок от старых к новым
+        return candles
 
     @classmethod
     async def get_candles_range(
