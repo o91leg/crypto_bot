@@ -189,3 +189,4 @@ node_modules/
 run_local.sh
 debug.py
 test_local.py
+*.pyc
