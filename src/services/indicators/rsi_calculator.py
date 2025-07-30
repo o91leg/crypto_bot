@@ -16,7 +16,12 @@ from utils.math_helpers import (
     calculate_single_rsi_value,
     is_valid_price
 )
-from utils.exceptions import InsufficientDataError, InvalidIndicatorParameterError
+from utils.exceptions import (
+    InsufficientDataError,
+    InvalidIndicatorParameterError,
+    DatabaseError,
+    RecordNotFoundError,
+)
 from utils.logger import LoggerMixin
 from data.models.candle_model import Candle
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -149,14 +154,32 @@ class RSICalculator(LoggerMixin):
             limit = period * 3  # Загружаем достаточно данных для стабильного расчета
 
         try:
-            # Получаем последние свечи
+            # Получаем последние свечи из базы данных
             candles = await Candle.get_latest_candles(
                 session=session,
                 pair_id=pair_id,
                 timeframe=timeframe,
-                limit=limit
+                limit=limit,
             )
+        except (DatabaseError, RecordNotFoundError) as e:
+            self.logger.error(
+                "Database error while loading candles for RSI",
+                pair_id=pair_id,
+                timeframe=timeframe,
+                error=str(e),
+                details=e.details,
+            )
+            return None
+        except Exception as e:
+            self.logger.error(
+                "Unexpected error loading candles for RSI",
+                pair_id=pair_id,
+                timeframe=timeframe,
+                error=str(e),
+            )
+            return None
 
+        try:
             if len(candles) < period + 1:
                 raise InsufficientDataError("RSI", period + 1, len(candles))
 
@@ -172,7 +195,7 @@ class RSICalculator(LoggerMixin):
                 pair_id=pair_id,
                 timeframe=timeframe,
                 required=e.details.get("required"),
-                provided=e.details.get("provided")
+                provided=e.details.get("provided"),
             )
             return None
         except InvalidIndicatorParameterError as e:
@@ -184,13 +207,21 @@ class RSICalculator(LoggerMixin):
                 value=e.details.get("value"),
             )
             return None
+        except (TypeError, ValueError) as e:
+            self.logger.error(
+                "Invalid candle values for RSI",
+                pair_id=pair_id,
+                timeframe=timeframe,
+                error=str(e),
+            )
+            return None
         except Exception as e:
             self.logger.error(
                 "Error calculating RSI from candles",
                 pair_id=pair_id,
                 timeframe=timeframe,
                 period=period,
-                error=str(e)
+                error=str(e),
             )
             return None
 
