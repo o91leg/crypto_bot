@@ -14,6 +14,7 @@ import structlog
 
 from data.models.user_pair_model import UserPair
 from utils.logger import log_user_action
+from utils.telegram_helpers import safe_edit_message
 from .my_pairs_formatters import (
     create_no_pairs_message, create_pairs_list_message,
     create_pair_management_message, create_rsi_display_message,
@@ -71,9 +72,10 @@ async def handle_my_pairs_start(callback: CallbackQuery, session: AsyncSession, 
         if not user_pairs:
             # У пользователя нет пар
             no_pairs_text = create_no_pairs_message()
-            await callback.message.edit_text(
+            await safe_edit_message(
+                callback.message,
                 no_pairs_text,
-                reply_markup=create_no_pairs_keyboard()
+                create_no_pairs_keyboard(),
             )
             await callback.answer("У вас нет отслеживаемых пар")
             log_user_action(user_id, "my_pairs_empty")
@@ -86,9 +88,10 @@ async def handle_my_pairs_start(callback: CallbackQuery, session: AsyncSession, 
         pairs_text = create_pairs_list_message(user_pairs)
         pairs_keyboard = create_pairs_list_keyboard(user_pairs)
 
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             pairs_text,
-            reply_markup=pairs_keyboard
+            pairs_keyboard,
         )
 
         await callback.answer()
@@ -137,9 +140,10 @@ async def handle_pair_management(callback: CallbackQuery, session: AsyncSession,
         management_text = create_pair_management_message(user_pair)
         management_keyboard = create_pair_management_keyboard(user_pair)
 
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             management_text,
-            reply_markup=management_keyboard
+            management_keyboard,
         )
 
         await callback.answer()
@@ -192,11 +196,12 @@ async def handle_timeframe_toggle(callback: CallbackQuery, session: AsyncSession
 
         # 🔥 НОВАЯ ЛОГИКА: Если таймфрейм ВКЛЮЧИЛИ - загружаем данные
         if new_state:  # Таймфрейм включен
-            await callback.message.edit_text(
+            await safe_edit_message(
+                callback.message,
                 f"📥 <b>Загрузка данных для {timeframe}</b>\n\n"
                 f"Пара: {user_pair.pair.display_name}\n\n"
                 f"⏳ Загружаем исторические данные...",
-                reply_markup=create_pair_management_keyboard(user_pair)
+                create_pair_management_keyboard(user_pair),
             )
 
             # Загружаем данные для нового таймфрейма
@@ -239,9 +244,10 @@ async def handle_timeframe_toggle(callback: CallbackQuery, session: AsyncSession
         management_text = create_pair_management_message(user_pair)
         management_keyboard = create_pair_management_keyboard(user_pair)
 
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             management_text,
-            reply_markup=management_keyboard
+            management_keyboard,
         )
 
         await callback.answer(success_message)
@@ -296,12 +302,13 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
 
         if not has_sufficient_data:
             # Показываем сообщение загрузки исторических данных
-            await callback.message.edit_text(
+            await safe_edit_message(
+                callback.message,
                 f"📥 <b>Загрузка исторических данных</b>\n\n"
                 f"Пара: {user_pair.pair.display_name}\n\n"
                 f"⏳ Загружаем данные с Binance для расчета RSI...\n"
                 f"Это может занять 10-30 секунд.",
-                reply_markup=get_back_to_management_keyboard(pair_id)
+                get_back_to_management_keyboard(pair_id),
             )
 
             # Загружаем исторические данные
@@ -341,9 +348,10 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
 • Проверьте интернет-соединение
 • Обратитесь к администратору"""
 
-                    await callback.message.edit_text(
+                    await safe_edit_message(
+                        callback.message,
                         error_text,
-                        reply_markup=get_back_to_management_keyboard(pair_id)
+                        get_back_to_management_keyboard(pair_id),
                     )
                     return
 
@@ -358,18 +366,20 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
 
 Попробуйте позже или обратитесь к администратору."""
 
-                await callback.message.edit_text(
+                await safe_edit_message(
+                    callback.message,
                     error_text,
-                    reply_markup=get_back_to_management_keyboard(pair_id)
+                    get_back_to_management_keyboard(pair_id),
                 )
                 return
 
         # Показываем индикатор расчета RSI
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             f"🔢 <b>Расчет RSI</b>\n\n"
             f"Пара: {user_pair.pair.display_name}\n\n"
             f"⏳ Рассчитываем индикаторы...",
-            reply_markup=get_back_to_management_keyboard(pair_id)
+            get_back_to_management_keyboard(pair_id),
         )
 
         # Рассчитываем RSI для активных таймфреймов
@@ -394,9 +404,10 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
 • Нажать "🔄 Обновить данные" ещё раз
 • Проверить активные таймфреймы"""
 
-            await callback.message.edit_text(
+            await safe_edit_message(
+                callback.message,
                 error_text,
-                reply_markup=create_rsi_display_keyboard(pair_id)
+                create_rsi_display_keyboard(pair_id),
             )
             return
 
@@ -404,9 +415,10 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
         rsi_text = create_rsi_display_message(user_pair, rsi_data)
         rsi_keyboard = create_rsi_display_keyboard(pair_id)
 
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             rsi_text,
-            reply_markup=rsi_keyboard
+            rsi_keyboard,
         )
 
         await callback.answer()
@@ -418,9 +430,10 @@ async def handle_rsi_view(callback: CallbackQuery, session: AsyncSession, state:
         logger.error("Error viewing RSI", user_id=user_id, error=str(e))
 
         error_text = create_rsi_error_message()
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             error_text,
-            reply_markup=get_back_to_management_keyboard(pair_id)
+            get_back_to_management_keyboard(pair_id),
         )
 
 @my_pairs_router.callback_query(F.data.startswith("back_to_management_"))
@@ -453,9 +466,10 @@ async def handle_back_to_management(callback: CallbackQuery, session: AsyncSessi
         management_text = create_pair_management_message(user_pair)
         management_keyboard = create_pair_management_keyboard(user_pair)
 
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             management_text,
-            reply_markup=management_keyboard
+            management_keyboard,
         )
 
         await callback.answer()
@@ -560,10 +574,11 @@ async def handle_rsi_current_view(callback: CallbackQuery, session: AsyncSession
         keyboard = builder.as_markup()
 
         # Отправляем сообщение
-        await callback.message.edit_text(
-            text=message_text,
-            reply_markup=keyboard,
-            parse_mode="HTML"
+        await safe_edit_message(
+            callback.message,
+            message_text,
+            keyboard,
+            parse_mode="HTML",
         )
 
         await callback.answer()
@@ -609,11 +624,12 @@ async def handle_refresh_rsi(callback: CallbackQuery, session: AsyncSession, sta
             return
 
         # Показываем индикатор загрузки
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             f"🔄 <b>Обновление RSI</b>\n\n"
             f"Пара: {user_pair.pair.display_name}\n\n"
             f"⏳ Пересчитываем индикаторы...",
-            reply_markup=get_back_to_management_keyboard(pair_id)
+            get_back_to_management_keyboard(pair_id),
         )
 
         # Принудительно очищаем кеш индикаторов для этой пары
@@ -626,9 +642,10 @@ async def handle_refresh_rsi(callback: CallbackQuery, session: AsyncSession, sta
         rsi_text = create_rsi_display_message(user_pair, rsi_data)
         rsi_keyboard = create_rsi_display_keyboard(pair_id)
 
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             rsi_text,
-            reply_markup=rsi_keyboard
+            rsi_keyboard,
         )
 
         await callback.answer("✅ RSI обновлен")
