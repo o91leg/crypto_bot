@@ -165,7 +165,7 @@ class BinanceWebSocketClient(LoggerMixin):
         await self._stop_background_tasks()
 
         # Закрываем WebSocket соединение
-        if self.websocket and not self.websocket.closed:
+        if self.websocket and getattr(self.websocket, "close_code", None) is None:
             try:
                 await self.websocket.close()
             except Exception as e:
@@ -331,7 +331,7 @@ class BinanceWebSocketClient(LoggerMixin):
             self.state = ConnectionState.DISCONNECTED
 
             # Пытаемся переподключиться
-            if not self.websocket.closed:
+            if self.websocket and getattr(self.websocket, "close_code", None) is None:
                 await self._handle_reconnection()
 
         except WebSocketException as e:
@@ -380,9 +380,9 @@ class BinanceWebSocketClient(LoggerMixin):
             bool: True если соединение активно
         """
         return (
-                self.state == ConnectionState.CONNECTED and
-                self.websocket is not None and
-                not self.websocket.closed
+            self.state == ConnectionState.CONNECTED
+            and self.websocket is not None
+            and getattr(self.websocket, "close_code", None) is None
         )
 
     async def _send_message(self, message: Dict[str, Any]) -> None:
@@ -392,7 +392,7 @@ class BinanceWebSocketClient(LoggerMixin):
         Args:
             message: Сообщение для отправки
         """
-        if not self.websocket or self.websocket.closed:
+        if not self.websocket or getattr(self.websocket, "close_code", None) is not None:
             raise WebSocketConnectionError(self.config.websocket_url, "WebSocket not connected")
 
         try:
@@ -611,7 +611,7 @@ class BinanceWebSocketClient(LoggerMixin):
         """Цикл отправки ping сообщений."""
         while self.state == ConnectionState.CONNECTED:
             try:
-                if self.websocket and not self.websocket.closed:  # ИСПРАВЛЕНО: проверяем правильно
+                if self.websocket and getattr(self.websocket, "close_code", None) is None:
                     await self.websocket.ping()
                     self.last_ping_time = time.time()
 
