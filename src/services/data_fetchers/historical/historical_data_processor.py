@@ -6,15 +6,47 @@
 """
 
 from typing import List, Dict, Any
+from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
+from decimal import Decimal, InvalidOperation
 
 from data.models.candle_model import Candle
-from utils.validators import validate_binance_kline_data, validate_binance_kline_data_detailed
+from utils.validators import (
+    validate_binance_kline_data,
+    validate_binance_kline_data_detailed,
+    validate_numeric_field,
+)
 from utils.logger import LoggerMixin
 
 # Настройка логирования
 logger = structlog.get_logger(__name__)
+
+
+def validate_numeric_field(value: str, field_name: str, max_digits: int = 24) -> Decimal:
+    """Валидировать числовое поле перед сохранением в БД."""
+    try:
+        decimal_value = Decimal(value)
+        max_value = Decimal('9999999999999999.99999999')
+        if decimal_value > max_value:
+            logger.warning(
+                "Value exceeds maximum, capping",
+                field_name=field_name,
+                original_value=str(decimal_value),
+                capped_value=str(max_value)
+            )
+            return max_value
+        if decimal_value < 0:
+            logger.warning(
+                "Negative value, setting to zero",
+                field_name=field_name,
+                value=str(decimal_value)
+            )
+            return Decimal('0')
+        return decimal_value
+    except (ValueError, InvalidOperation):
+        logger.error("Invalid decimal value", field_name=field_name, value=value)
+        return Decimal('0')
 
 
 class HistoricalDataProcessor(LoggerMixin):
@@ -35,6 +67,23 @@ class HistoricalDataProcessor(LoggerMixin):
         self.total_skipped = 0
 
         self.logger.info("HistoricalDataProcessor initialized")
+
+    async def save_candle_safely(self, session: AsyncSession, candle: Candle) -> bool:
+        """Безопасно сохранить свечу с обработкой ошибок."""
+        try:
+            session.add(candle)
+            await session.flush()
+            return True
+        except Exception as e:
+            self.logger.error(
+                "Error saving candle, rolling back",
+                error=str(e),
+                pair_id=candle.pair_id,
+                timeframe=candle.timeframe,
+                open_time=candle.open_time,
+            )
+            await session.rollback()
+            return False
 
     async def save_candles_to_db(
             self,
@@ -73,16 +122,27 @@ class HistoricalDataProcessor(LoggerMixin):
                     self.total_skipped += 1
                     continue
 
-                # Создаем свечу через метод модели
-                candle = await Candle.create_candle_from_params(
-                    session=session,
+                # Собираем объект свечи и сохраняем безопасно
+                candle = Candle(
                     pair_id=pair_id,
                     timeframe=timeframe,
-                    kline_data=kline_dict
+                    open_time=int(kline_dict["t"]),
+                    close_time=int(kline_dict["T"]),
+                    open_price=Decimal(str(kline_dict["o"])),
+                    high_price=Decimal(str(kline_dict["h"])),
+                    low_price=Decimal(str(kline_dict["l"])),
+                    close_price=Decimal(str(kline_dict["c"])),
+                    volume=Decimal(str(kline_dict["v"])),
+                    quote_volume=Decimal(str(kline_dict["q"])),
+                    trades_count=int(kline_dict["n"]),
+                    is_closed=bool(kline_dict["x"]),
                 )
 
-                saved_count += 1
-                self.total_saved += 1
+                if await self.save_candle_safely(session, candle):
+                    saved_count += 1
+                    self.total_saved += 1
+                else:
+                    self.total_skipped += 1
 
             except Exception as e:
                 # Скорее всего дублирующая запись - игнорируем
@@ -151,6 +211,9 @@ class HistoricalDataProcessor(LoggerMixin):
         # ]
 
         try:
+            validated_volume = validate_numeric_field(kline[5], "volume")
+            validated_quote_volume = validate_numeric_field(kline[7], "quote_volume")
+
             return {
                 "t": int(kline[0]),  # open_time
                 "T": int(kline[6]),  # close_time
@@ -160,8 +223,8 @@ class HistoricalDataProcessor(LoggerMixin):
                 "h": str(kline[2]),  # high_price
                 "l": str(kline[3]),  # low_price
                 "c": str(kline[4]),  # close_price
-                "v": str(kline[5]),  # volume
-                "q": str(kline[7]),  # quote_asset_volume
+                "v": str(validated_volume),  # volume
+                "q": str(validated_quote_volume),  # quote_asset_volume
                 "n": int(kline[8]),  # number_of_trades
                 "V": str(kline[9]),  # taker_buy_base_asset_volume
                 "Q": str(kline[10]),  # taker_buy_quote_asset_volume
