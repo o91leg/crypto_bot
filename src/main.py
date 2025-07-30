@@ -37,6 +37,7 @@ from utils.exceptions import ConfigurationError, DatabaseError
 from bot.handlers.add_pair import register_add_pair_handlers
 from bot.handlers.remove_pair_handler import register_remove_pair_handlers
 from bot.handlers.my_pairs import register_my_pairs_handlers
+from bot.handlers.debug_rsi_handler import register_debug_handlers
 
 # Импорты для системы сигналов и уведомлений
 from services.websocket.stream_manager import StreamManager
@@ -91,6 +92,7 @@ async def setup_dispatcher() -> Dispatcher:
     register_add_pair_handlers(dp)
     register_remove_pair_handlers(dp)
     register_my_pairs_handlers(dp)
+    register_debug_handlers(dp)
 
     logger.info("Dispatcher configured and handlers registered")
     return dp
