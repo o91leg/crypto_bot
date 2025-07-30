@@ -254,6 +254,39 @@ def validate_volume(volume: Union[str, float, Decimal]) -> tuple[bool, Optional[
         return False, "Неверный формат объема"
 
 
+def validate_numeric_field(value: Union[str, float, Decimal], field_name: str) -> Decimal:
+    """Валидировать числовое значение и вернуть Decimal.
+
+    Args:
+        value: Значение для проверки.
+        field_name: Название поля для сообщений об ошибке.
+
+    Returns:
+        Decimal: Валидированное значение.
+
+    Raises:
+        ValueError: Если значение некорректно.
+    """
+    try:
+        if isinstance(value, str):
+            value = value.strip()
+        decimal_value = Decimal(str(value))
+
+        if decimal_value.is_nan() or decimal_value.is_infinite():
+            raise ValueError
+
+        if decimal_value < 0:
+            raise ValueError
+
+        if decimal_value > Decimal("1e50"):
+            raise ValueError
+
+        return decimal_value
+
+    except (InvalidOperation, ValueError, TypeError):
+        raise ValueError(f"Invalid numeric value for {field_name}")
+
+
 def validate_user_id(user_id: Union[str, int]) -> tuple[bool, Optional[str]]:
     """
     Валидировать ID пользователя Telegram.
