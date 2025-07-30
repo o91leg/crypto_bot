@@ -6,6 +6,7 @@
 """
 
 from typing import List, Dict, Any
+from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
@@ -35,6 +36,23 @@ class HistoricalDataProcessor(LoggerMixin):
         self.total_skipped = 0
 
         self.logger.info("HistoricalDataProcessor initialized")
+
+    async def save_candle_safely(self, session: AsyncSession, candle: Candle) -> bool:
+        """Безопасно сохранить свечу с обработкой ошибок."""
+        try:
+            session.add(candle)
+            await session.flush()
+            return True
+        except Exception as e:
+            self.logger.error(
+                "Error saving candle, rolling back",
+                error=str(e),
+                pair_id=candle.pair_id,
+                timeframe=candle.timeframe,
+                open_time=candle.open_time,
+            )
+            await session.rollback()
+            return False
 
     async def save_candles_to_db(
             self,
@@ -73,16 +91,27 @@ class HistoricalDataProcessor(LoggerMixin):
                     self.total_skipped += 1
                     continue
 
-                # Создаем свечу через метод модели
-                candle = await Candle.create_candle_from_params(
-                    session=session,
+                # Собираем объект свечи и сохраняем безопасно
+                candle = Candle(
                     pair_id=pair_id,
                     timeframe=timeframe,
-                    kline_data=kline_dict
+                    open_time=int(kline_dict["t"]),
+                    close_time=int(kline_dict["T"]),
+                    open_price=Decimal(str(kline_dict["o"])),
+                    high_price=Decimal(str(kline_dict["h"])),
+                    low_price=Decimal(str(kline_dict["l"])),
+                    close_price=Decimal(str(kline_dict["c"])),
+                    volume=Decimal(str(kline_dict["v"])),
+                    quote_volume=Decimal(str(kline_dict["q"])),
+                    trades_count=int(kline_dict["n"]),
+                    is_closed=bool(kline_dict["x"]),
                 )
 
-                saved_count += 1
-                self.total_saved += 1
+                if await self.save_candle_safely(session, candle):
+                    saved_count += 1
+                    self.total_saved += 1
+                else:
+                    self.total_skipped += 1
 
             except Exception as e:
                 # Скорее всего дублирующая запись - игнорируем
