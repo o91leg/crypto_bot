@@ -12,7 +12,11 @@ import structlog
 from decimal import Decimal, InvalidOperation
 
 from data.models.candle_model import Candle
-from utils.validators import validate_binance_kline_data, validate_binance_kline_data_detailed
+from utils.validators import (
+    validate_binance_kline_data,
+    validate_binance_kline_data_detailed,
+    validate_numeric_field,
+)
 from utils.logger import LoggerMixin
 
 # Настройка логирования
@@ -207,6 +211,9 @@ class HistoricalDataProcessor(LoggerMixin):
         # ]
 
         try:
+            validated_volume = validate_numeric_field(kline[5], "volume")
+            validated_quote_volume = validate_numeric_field(kline[7], "quote_volume")
+
             return {
                 "t": int(kline[0]),  # open_time
                 "T": int(kline[6]),  # close_time
@@ -216,8 +223,8 @@ class HistoricalDataProcessor(LoggerMixin):
                 "h": str(kline[2]),  # high_price
                 "l": str(kline[3]),  # low_price
                 "c": str(kline[4]),  # close_price
-                "v": str(kline[5]),  # volume
-                "q": str(kline[7]),  # quote_asset_volume
+                "v": str(validated_volume),  # volume
+                "q": str(validated_quote_volume),  # quote_asset_volume
                 "n": int(kline[8]),  # number_of_trades
                 "V": str(kline[9]),  # taker_buy_base_asset_volume
                 "Q": str(kline[10]),  # taker_buy_quote_asset_volume
