@@ -9,8 +9,11 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
+import re
+from datetime import datetime
 
 from data.models.user_pair_model import UserPair
 from utils.logger import log_user_action
