@@ -10,7 +10,7 @@ from typing import List, Optional, Dict, Any
 from decimal import Decimal
 from sqlalchemy import (
     Integer, String, BigInteger, Numeric, ForeignKey,
-    select, desc, Index, UniqueConstraint
+    select, Index, UniqueConstraint
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -318,13 +318,11 @@ class Candle(Base):
                 cls.timeframe == timeframe,
                 cls.is_closed == True
             )
-            .order_by(desc(cls.open_time))
+            .order_by(cls.open_time.desc())
             .limit(limit)
         )
         result = await session.execute(stmt)
-        candles = list(result.scalars())
-        candles.reverse()  # Преобразуем в порядок от старых к новым
-        return candles
+        return list(reversed(result.scalars().all()))
 
     @classmethod
     async def get_candles_range(

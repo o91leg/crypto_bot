@@ -5,16 +5,16 @@
 Дата создания: 2025-07-28
 """
 
+from datetime import datetime
+import re
+import structlog
+
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import CallbackQuery, InlineKeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
-import structlog
-import re
-from datetime import datetime
 
 from data.models.user_pair_model import UserPair
 from utils.logger import log_user_action
@@ -709,7 +709,21 @@ async def handle_refresh_rsi(
         rsi_text = create_rsi_display_message(user_pair, rsi_data)
         rsi_keyboard = create_rsi_display_keyboard(pair_id)
 
-        await callback.message.edit_text(rsi_text, reply_markup=rsi_keyboard)
+        # Добавляем timestamp для уникальности сообщения
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        rsi_text_unique = rsi_text + f"\n\n<i>🕐 Обновлено: {timestamp}</i>"
+
+        try:
+            await callback.message.edit_text(
+                rsi_text_unique, reply_markup=rsi_keyboard
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                # Если сообщение идентично - просто отвечаем без редактирования
+                await callback.answer("✅ Данные актуальны")
+            else:
+                raise e
 
         await callback.answer("✅ RSI обновлен")
         log_user_action(user_id, "rsi_refreshed", pair_symbol=user_pair.pair.symbol)
