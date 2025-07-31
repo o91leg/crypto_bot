@@ -8,58 +8,30 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
-from services.indicators.rsi_calculator import RSICalculator
+from services.indicators.realtime_calculator import RealtimeCalculator
 
 # Настройка логирования
 logger = structlog.get_logger(__name__)
 
 
 async def calculate_rsi_for_pair(session: AsyncSession, user_pair) -> dict:
-    """
-    Рассчитать RSI для всех активных таймфреймов пары.
+    """Рассчитать RSI для пары с использованием живых данных."""
+    realtime_calc = RealtimeCalculator()
+    rsi_data: dict = {}
 
-    Args:
-        session: Сессия базы данных
-        user_pair: Пользовательская пара
-
-    Returns:
-        dict: RSI данные по таймфреймам
-    """
-    rsi_calculator = RSICalculator()
-    rsi_data = {}
-
-    enabled_timeframes = user_pair.get_enabled_timeframes()
-
-    for timeframe in enabled_timeframes:
+    for timeframe in user_pair.get_enabled_timeframes():
         try:
-            rsi_result = await rsi_calculator.calculate_rsi_from_candles(
-                session=session,
-                pair_id=user_pair.pair_id,
-                timeframe=timeframe
+            fresh_rsi = await realtime_calc.get_fresh_rsi(
+                session, user_pair.pair_id, timeframe
             )
 
-            if rsi_result:
-                interpretation_data = rsi_calculator.get_rsi_interpretation(rsi_result)
-                rsi_data[timeframe] = {
-                    "value": rsi_result.value,
-                    "signal_strength": rsi_result.get_signal_strength(),
-                    "interpretation": interpretation_data
-                }
+            if fresh_rsi:
+                rsi_data[timeframe] = fresh_rsi
             else:
-                rsi_data[timeframe] = {
-                    "error": "Недостаточно данных"
-                }
+                rsi_data[timeframe] = {"error": "Недостаточно данных"}
 
         except Exception as e:
-            logger.error(
-                "Error calculating RSI for timeframe",
-                pair_id=user_pair.pair_id,
-                timeframe=timeframe,
-                error=str(e)
-            )
-            rsi_data[timeframe] = {
-                "error": "Ошибка расчета"
-            }
+            rsi_data[timeframe] = {"error": f"Ошибка расчета: {str(e)[:50]}"}
 
     return rsi_data
 
@@ -109,14 +81,20 @@ def get_pair_statistics(user_pair) -> dict:
     return {
         "enabled_timeframes_count": len(enabled_timeframes),
         "total_timeframes_count": total_timeframes,
-        "enabled_percentage": (len(enabled_timeframes) / total_timeframes * 100) if total_timeframes > 0 else 0,
+        "enabled_percentage": (
+            len(enabled_timeframes) / total_timeframes * 100
+            if total_timeframes > 0
+            else 0
+        ),
         "signals_received": user_pair.signals_received,
         "pair_symbol": user_pair.pair.symbol,
-        "pair_display_name": user_pair.pair.display_name
+        "pair_display_name": user_pair.pair.display_name,
     }
 
 
-async def update_pair_timeframes_bulk(session: AsyncSession, user_pair, timeframes_config: dict) -> bool:
+async def update_pair_timeframes_bulk(
+    session: AsyncSession, user_pair, timeframes_config: dict
+) -> bool:
     """
     Массовое обновление таймфреймов пары.
 
@@ -130,10 +108,15 @@ async def update_pair_timeframes_bulk(session: AsyncSession, user_pair, timefram
     """
     try:
         # Проверяем, что хотя бы один таймфрейм будет активен
-        enabled_count = sum(1 for enabled in timeframes_config.values() if enabled)
+        enabled_count = sum(
+            1 for enabled in timeframes_config.values() if enabled
+        )
 
         if enabled_count == 0:
-            logger.warning("Attempted to disable all timeframes", pair_id=user_pair.pair_id)
+            logger.warning(
+                "Attempted to disable all timeframes",
+                pair_id=user_pair.pair_id,
+            )
             return False
 
         # Обновляем конфигурацию
@@ -143,7 +126,7 @@ async def update_pair_timeframes_bulk(session: AsyncSession, user_pair, timefram
         logger.info(
             "Bulk timeframes update completed",
             pair_id=user_pair.pair_id,
-            enabled_count=enabled_count
+            enabled_count=enabled_count,
         )
 
         return True
