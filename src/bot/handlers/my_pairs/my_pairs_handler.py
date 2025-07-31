@@ -709,7 +709,21 @@ async def handle_refresh_rsi(
         rsi_text = create_rsi_display_message(user_pair, rsi_data)
         rsi_keyboard = create_rsi_display_keyboard(pair_id)
 
-        await callback.message.edit_text(rsi_text, reply_markup=rsi_keyboard)
+        # Добавляем timestamp для уникальности сообщения
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        rsi_text_unique = rsi_text + f"\n\n<i>🕐 Обновлено: {timestamp}</i>"
+
+        try:
+            await callback.message.edit_text(
+                rsi_text_unique, reply_markup=rsi_keyboard
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                # Если сообщение идентично - просто отвечаем без редактирования
+                await callback.answer("✅ Данные актуальны")
+            else:
+                raise e
 
         await callback.answer("✅ RSI обновлен")
         log_user_action(user_id, "rsi_refreshed", pair_symbol=user_pair.pair.symbol)
