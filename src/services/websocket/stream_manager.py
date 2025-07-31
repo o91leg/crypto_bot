@@ -16,6 +16,8 @@ from config.binance_config import get_binance_config  # ИСПРАВЛЕН ИМ�
 from utils.exceptions import WebSocketConnectionError, BinanceDataError
 from utils.logger import LoggerMixin
 from utils.validators import validate_trading_pair_symbol, validate_timeframe
+from data.database import get_session as get_async_session
+from sqlalchemy import text
 
 # Настройка логирования
 logger = structlog.get_logger(__name__)
@@ -217,6 +219,9 @@ class StreamManager(LoggerMixin):
             # Запускаем фоновые задачи
             await self._start_background_tasks()
 
+            # Автоматическая подписка на пары пользователей
+            await self.subscribe_to_user_pairs()
+
             # Запускаем прослушивание сообщений
             asyncio.create_task(self.websocket_client.start_listening())
 
@@ -225,6 +230,76 @@ class StreamManager(LoggerMixin):
         except Exception as e:
             self.logger.error("Failed to start StreamManager", error=str(e))
             raise
+
+    async def subscribe_to_stream(self, stream_name: str) -> bool:
+        """Подписаться на поток данных."""
+        if not self.websocket_client:
+            raise WebSocketConnectionError("", "StreamManager not started")
+
+        try:
+            result = await self.websocket_client.subscribe_to_stream(stream_name)
+
+            # Регистрируем подписку локально, чтобы обрабатывать входящие данные
+            if result and stream_name not in self.subscriptions:
+                info = parse_stream_name(stream_name)
+                if info.get("valid") and info.get("type") == "kline":
+                    subscription = StreamSubscription(
+                        info["symbol"],
+                        info["timeframe"],
+                        {0}  # фиктивный пользователь для активации обработки
+                    )
+                    self.subscriptions[stream_name] = subscription
+                    self.user_streams[0].add(stream_name)
+                    self.total_subscriptions_created += 1
+
+            return bool(result)
+        except Exception as e:
+            self.logger.error(
+                "Failed to subscribe to stream",
+                stream=stream_name,
+                error=str(e)
+            )
+            return False
+
+    async def subscribe_to_user_pairs(self) -> None:
+        """Подписаться на все пары всех пользователей для получения живых данных."""
+        try:
+            async with get_async_session() as session:
+                result = await session.execute(
+                    text(
+                        """
+                        SELECT DISTINCT p.symbol 
+                        FROM pairs p 
+                        JOIN user_pairs up ON p.id = up.pair_id 
+                        WHERE up.is_active = true
+                        """
+                    )
+                )
+                symbols = [row.symbol for row in result]
+
+            if not symbols:
+                self.logger.warning(
+                    "No active pairs found for WebSocket subscription"
+                )
+                return
+
+            timeframes = ['1m', '5m', '15m', '1h', '2h', '4h', '1d', '1w']
+
+            for symbol in symbols:
+                for timeframe in timeframes:
+                    stream_name = f"{symbol.lower()}@kline_{timeframe}"
+                    await self.subscribe_to_stream(stream_name)
+                    self.logger.info(f"Subscribed to {stream_name}")
+
+            self.logger.info(
+                f"WebSocket subscribed to {len(symbols)} pairs, {len(timeframes)} timeframes each"
+            )
+
+        except Exception as e:
+            self.logger.error(
+                "Error subscribing to user pairs",
+                error=str(e)
+            )
 
     async def stop(self) -> None:
         """Остановить менеджер потоков."""
