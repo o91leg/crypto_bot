@@ -150,6 +150,8 @@ async def init_services() -> None:
     logger.info("Starting WebSocket stream manager...")
     stream_manager = StreamManager()
     await stream_manager.start()
+    await stream_manager.subscribe_to_user_pairs()
+    logger.info("WebSocket subscribed to all user pairs")
     logger.info("WebSocket stream manager started")
 
     logger.info("All services initialized successfully")
